@@ -120,6 +120,24 @@ echo "--- Stage 2: Asset Generation ---"
 N_SUBJECTS=$(jq '.candidates | length' "${PREPROD_FILE}")
 IMAGE_URLS=()
 
+escape_sed_repl() {
+  # Escape replacement text for sed when using ~ as delimiter.
+  # - '&' expands to match
+  # - '\' escapes
+  # - '~' is our delimiter
+  printf '%s' "$1" | sed -e 's/[&~\\]/\\&/g'
+}
+
+# Global camera + lighting lock for maximum consistency across images.
+CAMERA_FORMAT_LOCK=$(jq -r '.visual_authenticity.still_photography.likely_camera_formats[0] // ""' "${PREPROD_FILE}")
+LENS_FEEL_LOCK=$(jq -r '.visual_authenticity.still_photography.likely_lens_character[0] // ""' "${PREPROD_FILE}")
+FLASH_STYLE_LOCK=$(jq -r '.visual_authenticity.still_photography.flash_style[0] // ""' "${PREPROD_FILE}")
+FILM_LOOK_LOCK=$(jq -r '.visual_authenticity.still_photography.likely_film_stock_iso_and_look[0] // ""' "${PREPROD_FILE}")
+ARTIFACTS_LIST_LOCK=$(jq -r '.visual_authenticity.still_photography.common_artifacts | (.[0:4] // []) | join(", ")' "${PREPROD_FILE}")
+
+# Lighting strategy lock: keep identical across the whole set.
+LIGHTING_STRATEGY_LOCK=${LIGHTING_STRATEGY_LOCK:-"consistent low ambient practicals + on-camera direct flash fill; stable color temperature; no dramatic lighting changes between subjects"}
+
 # 2a: Image Generation (DALL-E 3)
 echo "--- 2a: Generating subject images ---"
 for i in $(seq 0 $((N_SUBJECTS - 1))); do
@@ -143,12 +161,18 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
     fi
 
     # Now use these variables in sed
-        sed "s~{{VENUE_NAME}}~${VENUE_NAME}~g; \
-          s~{{PLACE_CITY}}~${PLACE_CITY}~g; \
-          s~{{TIME_WINDOW}}~${TIME_WINDOW}~g; \
-          s~{{PERSON_FULL_NAME}}~${PERSON_FOR_IMAGE_PROMPT}~g; \
-          s~{{PERSON_AGE}}~${PERSON_AGE}~g; \
-          s~{{STILL_LOOK_PROFILE}}~${STILL_LOOK_PROFILE}~g" \
+        sed "s~{{VENUE_NAME}}~$(escape_sed_repl "${VENUE_NAME}")~g; \
+          s~{{PLACE_CITY}}~$(escape_sed_repl "${PLACE_CITY}")~g; \
+          s~{{TIME_WINDOW}}~$(escape_sed_repl "${TIME_WINDOW}")~g; \
+          s~{{PERSON_FULL_NAME}}~$(escape_sed_repl "${PERSON_FOR_IMAGE_PROMPT}")~g; \
+          s~{{PERSON_AGE}}~$(escape_sed_repl "${PERSON_AGE}")~g; \
+          s~{{STILL_LOOK_PROFILE}}~$(escape_sed_repl "${STILL_LOOK_PROFILE}")~g; \
+          s~{{CAMERA_FORMAT}}~$(escape_sed_repl "${CAMERA_FORMAT_LOCK}")~g; \
+          s~{{LENS_FEEL}}~$(escape_sed_repl "${LENS_FEEL_LOCK}")~g; \
+          s~{{LIGHTING_STRATEGY}}~$(escape_sed_repl "${LIGHTING_STRATEGY_LOCK}")~g; \
+          s~{{FLASH_STYLE}}~$(escape_sed_repl "${FLASH_STYLE_LOCK}")~g; \
+          s~{{FILM_LOOK}}~$(escape_sed_repl "${FILM_LOOK_LOCK}")~g; \
+          s~{{ARTIFACTS_LIST}}~$(escape_sed_repl "${ARTIFACTS_LIST_LOCK}")~g" \
          "templates/gen_image.md" > "$IMG_PROMPT_FILE"
 
     if [ "${ALLOW_REAL_PERSON_NAMES_IN_IMAGE_PROMPTS:-false}" = "true" ]; then
@@ -252,13 +276,58 @@ for i in $(seq 0 $((N_SUBJECTS - 2))); do
     START_IMG_URL=${IMAGE_URLS[$i]}
     END_IMG_URL=${IMAGE_URLS[$j]}
 
-    REPLICATE_PROMPT="Transition video, $(jq -r .era_style "${JOB_FILE}")"
+    # Build a structured video prompt from template to enforce single-shot continuity.
+    VIDEO_PROMPT_FILE="${OUT_DIR}/prompts/video_${i}_to_${j}.txt"
+    MOTION_FORMAT=$(jq -r '.visual_authenticity.motion_footage.likely_formats[0] // ""' "${PREPROD_FILE}")
+    MOTION_CADENCE=$(jq -r '.visual_authenticity.motion_footage.cadence_and_motion_character[0] // ""' "${PREPROD_FILE}")
+    MOTION_ARTIFACTS=$(jq -r '.visual_authenticity.motion_footage.common_artifacts | (.[0:4] // []) | join(", ")' "${PREPROD_FILE}")
+
+    # Defaults tuned for Replicate veo-3.1-fast schema
+    CLIP_DURATION="${CLIP_DURATION:-6}"
+    FPS="${FPS:-24}"
+    RESOLUTION="${RESOLUTION:-720p}"
+    LOOPABLE="${LOOPABLE:-false}"
+
+    # Keep move plan conservative to avoid model inserting cuts.
+    MOVE_TYPE="${MOVE_TYPE:-gentle handheld push}"
+    CAMERA_PATH_SPEC="${CAMERA_PATH_SPEC:-start wide/medium framing and slowly drift/push toward end framing; no jump cuts}"
+    PARALLAX_SPEC="${PARALLAX_SPEC:-subtle parallax; keep background stable}"
+    STABILIZATION_SPEC="${STABILIZATION_SPEC:-vintage handheld}"
+
+     sed "s~{{TIME_WINDOW}}~$(escape_sed_repl "${TIME_WINDOW}")~g; \
+       s~{{VENUE_NAME}}~$(escape_sed_repl "${VENUE_NAME}")~g; \
+       s~{{PLACE_CITY}}~$(escape_sed_repl "${PLACE_CITY}")~g; \
+       s~{{CLIP_DURATION}}~$(escape_sed_repl "${CLIP_DURATION}")~g; \
+       s~{{FPS}}~$(escape_sed_repl "${FPS}")~g; \
+       s~{{RESOLUTION}}~$(escape_sed_repl "${RESOLUTION}")~g; \
+       s~{{LOOPABLE}}~$(escape_sed_repl "${LOOPABLE}")~g; \
+       s~{{IMAGE_A_URI}}~$(escape_sed_repl "${START_IMG_URL}")~g; \
+       s~{{IMAGE_B_URI}}~$(escape_sed_repl "${END_IMG_URL}")~g; \
+       s~{{PERSON_FULL_NAME}}~N/A~g; \
+       s~{{CONTINUITY_NOTES}}~$(escape_sed_repl "same venue, consistent lighting, single continuous shot; no cuts")~g; \
+       s~{{BACKGROUND_ANCHORS}}~N/A~g; \
+       s~{{MOVE_TYPE}}~$(escape_sed_repl "${MOVE_TYPE}")~g; \
+       s~{{CAMERA_PATH_SPEC}}~$(escape_sed_repl "${CAMERA_PATH_SPEC}")~g; \
+       s~{{PARALLAX_SPEC}}~$(escape_sed_repl "${PARALLAX_SPEC}")~g; \
+       s~{{STABILIZATION_SPEC}}~$(escape_sed_repl "${STABILIZATION_SPEC}")~g; \
+       s~{{MOTION_FORMAT}}~$(escape_sed_repl "${MOTION_FORMAT}")~g; \
+       s~{{MOTION_CADENCE}}~$(escape_sed_repl "${MOTION_CADENCE}")~g; \
+       s~{{MOTION_ARTIFACTS}}~$(escape_sed_repl "${MOTION_ARTIFACTS}")~g" \
+      "templates/gen_video.md" > "${VIDEO_PROMPT_FILE}"
+
+    REPLICATE_PROMPT="$(cat "${VIDEO_PROMPT_FILE}")"
+
+    # Strongly steer away from edits/cuts/dissolves.
+    REPLICATE_NEGATIVE_PROMPT=${REPLICATE_NEGATIVE_PROMPT:-"cuts, jump cuts, dissolves, crossfades, montage, multiple shots, scene change, time jump, whip-pan cut, flash transition, text, subtitles"}
     REPLICATE_PAYLOAD=$(jq -n \
       --arg version "${REPLICATE_MODEL_VERSION}" \
       --arg image "${START_IMG_URL}" \
       --arg last_frame "${END_IMG_URL}" \
       --arg prompt "${REPLICATE_PROMPT}" \
-      '{version:$version, input:{image:$image, last_frame:$last_frame, prompt:$prompt, resolution:"720p"}}')
+      --arg negative_prompt "${REPLICATE_NEGATIVE_PROMPT}" \
+      --arg resolution "${RESOLUTION}" \
+      --argjson duration "${CLIP_DURATION}" \
+      '{version:$version, input:{image:$image, last_frame:$last_frame, prompt:$prompt, negative_prompt:$negative_prompt, resolution:$resolution, duration:$duration}}')
 
     # This command starts a video generation job on Replicate.
     REPLICATE_RESPONSE=$(curl -sS -X POST "https://api.replicate.com/v1/predictions" \

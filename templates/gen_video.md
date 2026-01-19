@@ -13,6 +13,13 @@ Goal: Generate a short clip that transitions from Image A to Image B with believ
 - loopable: {{LOOPABLE}} (true/false)
 </context>
 
+<single_shot_requirement>
+- This must be ONE continuous shot.
+- No cuts, no edits, no dissolves, no montage, no time jumps.
+- No whip-pan "hidden" cuts.
+- Exposure and lighting should remain continuous (no sudden brightness/color shifts).
+</single_shot_requirement>
+
 <input_images>
 A_start_image: {{IMAGE_A_URI}}
 B_end_image: {{IMAGE_B_URI}}

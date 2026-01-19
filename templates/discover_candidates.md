@@ -43,6 +43,11 @@ Inputs:
 - Identify the MOST likely motion-picture look (if requested for video aesthetic):
   - common formats for candid footage (e.g., 8mm/16mm), motion cadence, gate weave, etc.
 
+Consistency requirement:
+- Your visual_authenticity fields will be used as a global "style lock" across the entire run.
+- Order each array in visual_authenticity with the single best choice FIRST.
+- The first element of each array should be compatible with the others and treated as the fixed choice across all images/videos.
+
 3) Reference images (for conditioning / style guidance)
 - Provide a list of existing reference photos that match:
   - (a) venue or venue-like interiors in the same era

@@ -46,6 +46,8 @@ chmod +x run.sh scripts/*.sh
 ./run.sh example_job.json
 ```
 
+The default `example_job.json` is safe to run without API keys (it uses local mocks). For a real-provider example, see `job.example.json`.
+
 After it finishes, look in the newest run folder:
 
 ```bash
@@ -97,6 +99,13 @@ export REPLICATE_API_TOKEN="..."
 ```
 
 `run.sh` also loads a local `.env` file if present.
+
+Recommended setup:
+
+- Copy `.env.example` → `.env` and fill in your keys.
+- Copy `job.example.json` → `job.json` and tweak inputs.
+
+Note: `.env`, `job.json`, and `runs/` are intentionally ignored by git.
 
 ## Outputs
 
