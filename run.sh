@@ -51,20 +51,43 @@ replicate_upload_file() {
   echo "$url"
 }
 
+escape_sed_repl() {
+  # Escape replacement text for sed when using ~ as delimiter.
+  # - '&' expands to match
+  # - '\' escapes
+  # - '~' is our delimiter
+  printf '%s' "$1" | sed -e 's/[&~\\]/\\&/g'
+}
+
 # --- STAGE 1: RESEARCH (LLM) ---
 echo "--- Stage 1: Research ---"
 PROMPT_TEMPLATE="templates/discover_candidates.md"
 RESEARCH_PROMPT_FILE="${OUT_DIR}/prompts/00_research_prompt.txt"
 
 # Populate the research prompt template
-sed "s/{{PLACE_NAME}}/$(jq -r .venue ${JOB_FILE})/g; \
-     s/{{PLACE_CITY}}/$(jq -r .location ${JOB_FILE})/g; \
-     s/{{VENUE_NAME}}/$(jq -r .venue ${JOB_FILE})/g; \
-     s/{{TIME_WINDOW}}/$(jq -r .date ${JOB_FILE})/g; \
-     s/{{NOTES}}/$(jq -r .era_style ${JOB_FILE})/g; \
-     s/{{TARGET_SUBJECT_COUNT}}/$(jq -r .num_subjects ${JOB_FILE})/g; \
-     s/{{ALLOW_LIVING_PEOPLE}}/$(jq -r .allow_living_people ${JOB_FILE})/g; \
-     s/{{ALLOW_MINORS}}/$(jq -r .allow_minors ${JOB_FILE})/g" \
+PLACE_NAME=$(jq -r .venue "${JOB_FILE}")
+PLACE_CITY=$(jq -r .location "${JOB_FILE}")
+PLACE_COUNTRY=$(jq -r '.place_country // empty' "${JOB_FILE}" 2>/dev/null || true)
+if [ -z "${PLACE_COUNTRY}" ] || [ "${PLACE_COUNTRY}" = "null" ]; then
+  PLACE_COUNTRY=$(echo "${PLACE_CITY}" | awk -F',' '{print $NF}' | xargs)
+fi
+
+MIN_CONFIDENCE=$(jq -r '.min_confidence // 0.7' "${JOB_FILE}" 2>/dev/null || echo "0.7")
+GEOGRAPHY_SCOPE=$(jq -r '.geography_scope // "global"' "${JOB_FILE}" 2>/dev/null || echo "global")
+DIVERSITY_GOALS=$(jq -r '.diversity_goals // ""' "${JOB_FILE}" 2>/dev/null || echo "")
+
+sed "s/{{PLACE_NAME}}/$(escape_sed_repl "${PLACE_NAME}")/g; \
+  s/{{PLACE_CITY}}/$(escape_sed_repl "${PLACE_CITY}")/g; \
+  s/{{PLACE_COUNTRY}}/$(escape_sed_repl "${PLACE_COUNTRY}")/g; \
+  s/{{VENUE_NAME}}/$(escape_sed_repl "${PLACE_NAME}")/g; \
+  s/{{TIME_WINDOW}}/$(escape_sed_repl "$(jq -r .date "${JOB_FILE}")")/g; \
+  s/{{NOTES}}/$(escape_sed_repl "$(jq -r .era_style "${JOB_FILE}")")/g; \
+  s/{{TARGET_SUBJECT_COUNT}}/$(escape_sed_repl "$(jq -r .num_subjects "${JOB_FILE}")")/g; \
+  s/{{ALLOW_LIVING_PEOPLE}}/$(escape_sed_repl "$(jq -r .allow_living_people "${JOB_FILE}")")/g; \
+  s/{{ALLOW_MINORS}}/$(escape_sed_repl "$(jq -r .allow_minors "${JOB_FILE}")")/g; \
+  s/{{MIN_CONFIDENCE}}/$(escape_sed_repl "${MIN_CONFIDENCE}")/g; \
+  s/{{GEOGRAPHY_SCOPE}}/$(escape_sed_repl "${GEOGRAPHY_SCOPE}")/g; \
+  s/{{DIVERSITY_GOALS}}/$(escape_sed_repl "${DIVERSITY_GOALS}")/g" \
      "${PROMPT_TEMPLATE}" > "${RESEARCH_PROMPT_FILE}"
 
 echo "Populated research prompt. Calling OpenAI LLM..."
@@ -120,14 +143,6 @@ echo "--- Stage 2: Asset Generation ---"
 N_SUBJECTS=$(jq '.candidates | length' "${PREPROD_FILE}")
 IMAGE_URLS=()
 
-escape_sed_repl() {
-  # Escape replacement text for sed when using ~ as delimiter.
-  # - '&' expands to match
-  # - '\' escapes
-  # - '~' is our delimiter
-  printf '%s' "$1" | sed -e 's/[&~\\]/\\&/g'
-}
-
 # Global camera + lighting lock for maximum consistency across images.
 CAMERA_FORMAT_LOCK=$(jq -r '.visual_authenticity.still_photography.likely_camera_formats[0] // ""' "${PREPROD_FILE}")
 LENS_FEEL_LOCK=$(jq -r '.visual_authenticity.still_photography.likely_lens_character[0] // ""' "${PREPROD_FILE}")
@@ -149,6 +164,7 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
     VENUE_NAME=$(jq -r .place_time.venue_name "${PREPROD_FILE}")
     PLACE_CITY=$(jq -r .location "${JOB_FILE}")
     TIME_WINDOW=$(jq -r .date "${JOB_FILE}")
+    ERA_STYLE=$(jq -r .era_style "${JOB_FILE}")
     PERSON_FULL_NAME=$(echo "$CANDIDATE_JSON" | jq -r .full_name)
     PERSON_AGE=$(echo "$CANDIDATE_JSON" | jq -r .estimated_age_during_time_window)
     STILL_LOOK_PROFILE=$(echo "$VISUAL_JSON" | jq -c .still_photography)
@@ -157,8 +173,35 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
     # Default behavior: redact names in the image prompt, but keep the real name in preproduction.json for labeling.
     PERSON_FOR_IMAGE_PROMPT="$PERSON_FULL_NAME"
     if [ "${ALLOW_REAL_PERSON_NAMES_IN_IMAGE_PROMPTS:-false}" != "true" ]; then
-      PERSON_FOR_IMAGE_PROMPT="a plausible late-1970s punk scene regular (fictional)"
+      PERSON_FOR_IMAGE_PROMPT="a plausible patron at ${VENUE_NAME} in ${TIME_WINDOW} (fictional), styled to match: ${ERA_STYLE}"
     fi
+
+    # Populate the per-image prompt slots with era-consistent defaults.
+    WARDROBE_SPEC=${WARDROBE_SPEC:-"period-appropriate wardrobe consistent with ${TIME_WINDOW} at ${VENUE_NAME}; match: ${ERA_STYLE}"}
+    HAIR_MAKEUP_SPEC=${HAIR_MAKEUP_SPEC:-"period-appropriate hair and makeup consistent with: ${ERA_STYLE}"}
+    EXPRESSION_SPEC=${EXPRESSION_SPEC:-"natural candid expression; relaxed and engaged with the scene"}
+    POSE_ACTION_SPEC=${POSE_ACTION_SPEC:-"candid action appropriate to the venue (walking, chatting, holding a drink); not posed"}
+    COMPANIONS_SPEC=${COMPANIONS_SPEC:-"0–2 nearby patrons, period-appropriate"}
+
+    SHOT_VOCAB_LEN=$(jq -r '.shot_vocabulary | length' "${PREPROD_FILE}" 2>/dev/null || echo 0)
+    if [ "${SHOT_VOCAB_LEN}" -gt 0 ]; then
+      SHOT_IDX=$((i % SHOT_VOCAB_LEN))
+      SHOT_LOCATION=$(jq -r ".shot_vocabulary[${SHOT_IDX}].shot_label // .shot_vocabulary[${SHOT_IDX}].shot_type // \"interior\"" "${PREPROD_FILE}")
+      SHOT_TYPE=$(jq -r ".shot_vocabulary[${SHOT_IDX}].shot_type // \"medium\"" "${PREPROD_FILE}")
+      BACKGROUND_ANCHORS=$(jq -r ".shot_vocabulary[${SHOT_IDX}].visual_anchors | join(\", \")" "${PREPROD_FILE}")
+      INTERIOR_DESIGN_SPEC=$(jq -r ".shot_vocabulary[${SHOT_IDX}].lighting_cues | (.[0:4] // []) | join(\", \")" "${PREPROD_FILE}")
+    else
+      SHOT_LOCATION=${SHOT_LOCATION:-"interior"}
+      SHOT_TYPE=${SHOT_TYPE:-"medium"}
+      BACKGROUND_ANCHORS=${BACKGROUND_ANCHORS:-"tables, patrons, practical lights"}
+      INTERIOR_DESIGN_SPEC=${INTERIOR_DESIGN_SPEC:-"interior cues consistent with ${VENUE_NAME} and ${TIME_WINDOW}"}
+    fi
+
+    COMPOSITION_SPEC=${COMPOSITION_SPEC:-"handheld candid framing, slightly off-center subject, busy background"}
+    CROWD_FASHION_SPEC=${CROWD_FASHION_SPEC:-"crowd styling consistent with: ${ERA_STYLE}"}
+
+    REFERENCE_IMAGE_URLS=$(jq -r '.reference_images | (.[0:4] // []) | map(.url) | join(" ")' "${PREPROD_FILE}" 2>/dev/null || echo "")
+    FASHION_REFERENCE_URLS=$(jq -r '.reference_images | (.[0:4] // []) | map(.url) | join(" ")' "${PREPROD_FILE}" 2>/dev/null || echo "")
 
     # Now use these variables in sed
         sed "s~{{VENUE_NAME}}~$(escape_sed_repl "${VENUE_NAME}")~g; \
@@ -166,13 +209,26 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
           s~{{TIME_WINDOW}}~$(escape_sed_repl "${TIME_WINDOW}")~g; \
           s~{{PERSON_FULL_NAME}}~$(escape_sed_repl "${PERSON_FOR_IMAGE_PROMPT}")~g; \
           s~{{PERSON_AGE}}~$(escape_sed_repl "${PERSON_AGE}")~g; \
+          s~{{WARDROBE_SPEC}}~$(escape_sed_repl "${WARDROBE_SPEC}")~g; \
+          s~{{HAIR_MAKEUP_SPEC}}~$(escape_sed_repl "${HAIR_MAKEUP_SPEC}")~g; \
+          s~{{EXPRESSION_SPEC}}~$(escape_sed_repl "${EXPRESSION_SPEC}")~g; \
+          s~{{POSE_ACTION_SPEC}}~$(escape_sed_repl "${POSE_ACTION_SPEC}")~g; \
+          s~{{COMPANIONS_SPEC}}~$(escape_sed_repl "${COMPANIONS_SPEC}")~g; \
+          s~{{SHOT_LOCATION}}~$(escape_sed_repl "${SHOT_LOCATION}")~g; \
+          s~{{SHOT_TYPE}}~$(escape_sed_repl "${SHOT_TYPE}")~g; \
+          s~{{COMPOSITION_SPEC}}~$(escape_sed_repl "${COMPOSITION_SPEC}")~g; \
+          s~{{BACKGROUND_ANCHORS}}~$(escape_sed_repl "${BACKGROUND_ANCHORS}")~g; \
+          s~{{CROWD_FASHION_SPEC}}~$(escape_sed_repl "${CROWD_FASHION_SPEC}")~g; \
+          s~{{INTERIOR_DESIGN_SPEC}}~$(escape_sed_repl "${INTERIOR_DESIGN_SPEC}")~g; \
           s~{{STILL_LOOK_PROFILE}}~$(escape_sed_repl "${STILL_LOOK_PROFILE}")~g; \
           s~{{CAMERA_FORMAT}}~$(escape_sed_repl "${CAMERA_FORMAT_LOCK}")~g; \
           s~{{LENS_FEEL}}~$(escape_sed_repl "${LENS_FEEL_LOCK}")~g; \
           s~{{LIGHTING_STRATEGY}}~$(escape_sed_repl "${LIGHTING_STRATEGY_LOCK}")~g; \
           s~{{FLASH_STYLE}}~$(escape_sed_repl "${FLASH_STYLE_LOCK}")~g; \
           s~{{FILM_LOOK}}~$(escape_sed_repl "${FILM_LOOK_LOCK}")~g; \
-          s~{{ARTIFACTS_LIST}}~$(escape_sed_repl "${ARTIFACTS_LIST_LOCK}")~g" \
+          s~{{ARTIFACTS_LIST}}~$(escape_sed_repl "${ARTIFACTS_LIST_LOCK}")~g; \
+          s~{{REFERENCE_IMAGE_URLS}}~$(escape_sed_repl "${REFERENCE_IMAGE_URLS}")~g; \
+          s~{{FASHION_REFERENCE_URLS}}~$(escape_sed_repl "${FASHION_REFERENCE_URLS}")~g" \
          "templates/gen_image.md" > "$IMG_PROMPT_FILE"
 
     if [ "${ALLOW_REAL_PERSON_NAMES_IN_IMAGE_PROMPTS:-false}" = "true" ]; then
@@ -269,6 +325,46 @@ fi
 
 echo "Using Replicate model version: ${REPLICATE_MODEL_VERSION}"
 
+generate_local_transition_clip() {
+  local start_img_path="$1"
+  local end_img_path="$2"
+  local out_path="$3"
+  local duration="$4"
+  local fps="$5"
+  local res="$6"
+
+  local w=1280
+  local h=720
+  if [ "$res" = "1080p" ]; then
+    w=1920; h=1080
+  elif [ "$res" = "720p" ]; then
+    w=1280; h=720
+  fi
+
+  local half
+  half=$(awk -v d="$duration" 'BEGIN { h=d/2; if (h < 1) h=1; printf "%.3f", h }')
+
+  local a_tmp
+  local b_tmp
+  a_tmp="${OUT_DIR}/videos/clips/.tmp_${RANDOM}_a.mp4"
+  b_tmp="${OUT_DIR}/videos/clips/.tmp_${RANDOM}_b.mp4"
+
+  # Create two short motion clips and hard-cut concat them.
+  ffmpeg -loglevel error -y -loop 1 -i "$start_img_path" \
+    -vf "scale=${w}:${h},zoompan=z='if(lte(pzoom,1.0),1.0,zoom+0.001)':d=${fps}*${half}:s=${w}x${h},fps=${fps},format=yuv420p" \
+    -t "$half" -r "$fps" -c:v libx264 "$a_tmp"
+
+  ffmpeg -loglevel error -y -loop 1 -i "$end_img_path" \
+    -vf "scale=${w}:${h},zoompan=z='if(lte(pzoom,1.0),1.0,zoom+0.001)':d=${fps}*${half}:s=${w}x${h},fps=${fps},format=yuv420p" \
+    -t "$half" -r "$fps" -c:v libx264 "$b_tmp"
+
+  ffmpeg -loglevel error -y -f concat -safe 0 \
+    -i <(printf "file '%s'\nfile '%s'\n" "$a_tmp" "$b_tmp") \
+    -c copy "$out_path"
+
+  rm -f "$a_tmp" "$b_tmp"
+}
+
 for i in $(seq 0 $((N_SUBJECTS - 2))); do
     j=$((i + 1))
     echo "Generating transition video from subject ${i} to ${j}..."
@@ -318,7 +414,7 @@ for i in $(seq 0 $((N_SUBJECTS - 2))); do
     REPLICATE_PROMPT="$(cat "${VIDEO_PROMPT_FILE}")"
 
     # Strongly steer away from edits/cuts/dissolves.
-    REPLICATE_NEGATIVE_PROMPT=${REPLICATE_NEGATIVE_PROMPT:-"cuts, jump cuts, dissolves, crossfades, montage, multiple shots, scene change, time jump, whip-pan cut, flash transition, text, subtitles"}
+    REPLICATE_NEGATIVE_PROMPT=${REPLICATE_NEGATIVE_PROMPT:-"dissolve, crossfade, fade in, fade out, montage, multiple shots, scene change, time jump, jump cut, whip-pan cut, match cut, flash transition, split screen, collage, text, subtitles, captions, credits, words, letters, readable signage"}
     REPLICATE_PAYLOAD=$(jq -n \
       --arg version "${REPLICATE_MODEL_VERSION}" \
       --arg image "${START_IMG_URL}" \
@@ -339,9 +435,12 @@ for i in $(seq 0 $((N_SUBJECTS - 2))); do
 
     POLL_URL=$(echo "$REPLICATE_RESPONSE" | jq -r '.urls.get')
     if [ -z "$POLL_URL" ] || [ "$POLL_URL" == "null" ]; then
-        echo "Error: Failed to start Replicate job. Response:"
-        echo "$REPLICATE_RESPONSE"
-        exit 1
+      echo "Warning: Failed to start Replicate video job; generating local fallback clip." >&2
+      echo "$REPLICATE_RESPONSE" >&2
+      VIDEO_PATH="${OUT_DIR}/videos/clips/transition_${i}_to_${j}.mp4"
+      generate_local_transition_clip "${OUT_DIR}/images/subject_${i}.png" "${OUT_DIR}/images/subject_${j}.png" "$VIDEO_PATH" "${CLIP_DURATION}" "${FPS}" "${RESOLUTION}"
+      echo "Fallback transition ${i} -> ${j} written to ${VIDEO_PATH}" >&2
+      continue
     fi
     
     # Poll for result
@@ -358,9 +457,12 @@ for i in $(seq 0 $((N_SUBJECTS - 2))); do
             echo "Transition video ${i} -> ${j} downloaded to ${VIDEO_PATH}"
             break
         elif [ "$STATUS" == "failed" ] || [ "$STATUS" == "canceled" ]; then
-            echo "Error: Replicate job failed or was canceled."
-            echo "$POLL_RESPONSE"
-            exit 1
+          echo "Warning: Replicate job failed/canceled; generating local fallback clip." >&2
+          echo "$POLL_RESPONSE" >&2
+          VIDEO_PATH="${OUT_DIR}/videos/clips/transition_${i}_to_${j}.mp4"
+          generate_local_transition_clip "${OUT_DIR}/images/subject_${i}.png" "${OUT_DIR}/images/subject_${j}.png" "$VIDEO_PATH" "${CLIP_DURATION}" "${FPS}" "${RESOLUTION}"
+          echo "Fallback transition ${i} -> ${j} written to ${VIDEO_PATH}" >&2
+          break
         fi
         sleep 5
     done

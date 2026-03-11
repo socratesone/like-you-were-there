@@ -13,14 +13,14 @@ Inputs:
 - place_city: {{PLACE_CITY}}
 - place_country: {{PLACE_COUNTRY}}
 - venue_name: {{VENUE_NAME}}
-- time_window: {{TIME_WINDOW}}  (e.g., "May 1978" or "Summer 1982" or "1977-06-01..1977-06-30")
-- notes: {{NOTES}}  (freeform constraints/themes: "punk crowd", "VIP booth", "backstage", etc.)
-- target_subject_count: {{TARGET_SUBJECT_COUNT}}  (e.g., 5–12)
-- allow_living_people: {{ALLOW_LIVING_PEOPLE}}  (true/false)
-- allow_minors: {{ALLOW_MINORS}}  (true/false)
+- time_window: {{TIME_WINDOW}}
+- notes: {{NOTES}}
+- target_subject_count: {{TARGET_SUBJECT_COUNT}}
+- allow_living_people: {{ALLOW_LIVING_PEOPLE}}
+- allow_minors: {{ALLOW_MINORS}}
 - min_confidence: {{MIN_CONFIDENCE}}  (0.0–1.0)
-- geography_scope: {{GEOGRAPHY_SCOPE}}  (e.g., "NYC-only", "US + UK visitors", "global")
-- diversity_goals: {{DIVERSITY_GOALS}}  (optional: representation constraints, eras, subcultures)
+- geography_scope: {{GEOGRAPHY_SCOPE}}
+- diversity_goals: {{DIVERSITY_GOALS}}
 </context>
 
 <instructions>

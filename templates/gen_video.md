@@ -20,6 +20,12 @@ Goal: Generate a short clip that transitions from Image A to Image B with believ
 - Exposure and lighting should remain continuous (no sudden brightness/color shifts).
 </single_shot_requirement>
 
+<pov_walkthrough>
+- Camera is first-person POV, like someone physically walking through the venue ("like you were there").
+- Movement should be mostly a slow forward dolly/walk, with occasional gentle pans only to turn into another room or reframe a new focal point.
+- Avoid the look of "two still images blending". It should feel like continuous parallax-rich motion through space.
+</pov_walkthrough>
+
 <input_images>
 A_start_image: {{IMAGE_A_URI}}
 B_end_image: {{IMAGE_B_URI}}
@@ -49,6 +55,7 @@ Match period look from Step 1 motion_footage:
 - Avoid face/hand morphing and background "liquefy."
 - Preserve readable objects; if signage becomes unreadable, keep it minimal rather than generating new text.
 - No sudden lighting jumps; flash-like pops only if explicitly requested.
+- Avoid any on-screen text, captions, subtitles, credits, or readable signage.
 </artifact_avoidance>
 
 <output_requirements>
