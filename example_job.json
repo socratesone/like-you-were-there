@@ -1,0 +1,14 @@
+{
+  "location": "New York City, NY, USA",
+  "venue": "CBGB",
+  "date": "1977-08-15",
+  "num_subjects": 3,
+  "output_seconds": 30,
+  "era_style": "late-70s downtown punk club, gritty and raw",
+  "camera_style": "handheld 16mm film, grainy, low light with lens flare",
+  "provider": {
+    "llm": "local-mock",
+    "image_gen": "local-mock",
+    "video_gen": "local-mock"
+  }
+}

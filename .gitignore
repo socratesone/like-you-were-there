@@ -1,0 +1,20 @@
+/runs/
+*.pyc
+__pycache__/
+.env*
+!.env.example
+.DS_Store
+.gemini/
+.specify/
+.github/
+.vscode/
+node_modules/
+npm-debug.log*
+yarn-error.log*
+dist/
+build/
+coverage/
+logs/
+*.log
+# Local job configs (may contain personal locations/notes)
+job.json

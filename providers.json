@@ -1,0 +1,17 @@
+{
+  "llm": {
+    "name": "openai",
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  "image": {
+    "name": "openai",
+    "endpoint": "https://api.openai.com/v1/images/generations",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  "video": {
+    "name": "mock",
+    "endpoint": "",
+    "api_key_env": "VIDEO_API_KEY"
+  }
+}

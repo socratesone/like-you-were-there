@@ -1,0 +1,16 @@
+{
+  "location": "Paris, France",
+  "venue": "Montparnasse Cafés",
+  "date": "1925-12-24",
+  "num_subjects": 5,
+  "output_seconds": 30,
+  "era_style": "Roaring Twenties Parisian café, lively and artistic, warm lighting",
+  "camera_style": "early 35mm rangefinder black and white film, high contrast, spontaneous",
+  "provider": {
+    "llm": "openai/gpt-4-turbo",
+    "image_gen": "openai/dall-e-3",
+    "video_gen": "replicate/google/veo-3.1-fast"
+  },
+  "allow_living_people": false,
+  "allow_minors": false
+}
