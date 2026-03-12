@@ -1,15 +1,15 @@
 {
-  "location": "Boston, MA, USA",
-  "venue": "The Comedy Studio",
-  "date": "1996-01-15",
+  "location": "Rome, 300 AD",
+  "venue": "Circus Maximus",
+  "date": "300-08-15",
   "num_subjects": 3,
-  "output_seconds": 15,
-  "era_style": "mid-90s Boston comedy club, casual and intimate, warm lighting",
-  "camera_style": "Canon EOS-1N film, vibrant colors, steady shots",
+  "output_seconds": 20,
+  "era_style": "Ancient Roman. mature Imperial Roman architectural and visual style: huge, regular, stone-built, and heavily decorated, but more about mass spectacle than fine detail. ",
+  "camera_style": "“Ultra‑high‑resolution 100MP medium‑format digital camera with tilt‑shift wide‑angle lens, tripod‑mounted, capturing ultra‑sharp architectural details and dynamic range.",
   "provider": {
-    "llm": "openai/gpt-4-turbo",
+    "llm": "openai/gpt-5.4",
     "image_gen": "openai/dall-e-3",
-    "video_gen": "replicate/google/veo-3.1-fast"
+    "video_gen": "kwaivgi/kling-v3-video"
   },
   "allow_living_people": false,
   "allow_minors": false
