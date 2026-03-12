@@ -26,6 +26,18 @@ mkdir -p "${OUT_DIR}"/{prompts,images,videos/clips,videos/stills,logs}
 cp "${JOB_FILE}" "${OUT_DIR}/job.json"
 echo "Run started. All artifacts will be saved in ${OUT_DIR}"
 
+# Early validation: avoid spending LLM tokens if the image provider hint is invalid.
+IMAGE_PROVIDER_HINT=$(jq -r '.provider.image_gen // empty' "${JOB_FILE}" 2>/dev/null || true)
+if [ -z "${IMAGE_PROVIDER_HINT}" ] || [ "${IMAGE_PROVIDER_HINT}" = "null" ]; then
+  echo "Error: provider.image_gen is required (example: openai/dall-e-3)." >&2
+  exit 1
+fi
+if [ "${IMAGE_PROVIDER_HINT}" != "local-mock" ] && [[ "${IMAGE_PROVIDER_HINT}" != openai/* ]]; then
+  echo "Error: Unsupported provider.image_gen: ${IMAGE_PROVIDER_HINT}" >&2
+  echo "Use openai/<model> (e.g. openai/dall-e-3) or local-mock." >&2
+  exit 1
+fi
+
 replicate_upload_file() {
   local file_path="$1"
   local label="$2"
@@ -49,6 +61,35 @@ replicate_upload_file() {
   fi
 
   echo "$url"
+}
+
+is_png_file() {
+  local path="$1"
+  [ -s "$path" ] || return 1
+  local sig
+  sig=$(head -c 8 "$path" | od -An -t x1 | tr -d ' \n')
+  [ "$sig" = "89504e470d0a1a0a" ]
+}
+
+get_image_max_prompt_chars() {
+  # Deterministic preflight for provider limits (default: 4000 chars for OpenAI Images).
+  # Override via env IMAGE_MAX_PROMPT_CHARS if desired.
+  if [ -n "${IMAGE_MAX_PROMPT_CHARS:-}" ]; then
+    echo "${IMAGE_MAX_PROMPT_CHARS}"
+    return 0
+  fi
+
+  local providers_file="${ROOT_DIR:-.}/providers.json"
+  if [ -f "${providers_file}" ]; then
+    local v
+    v=$(jq -r '.image.max_prompt_chars // empty' "${providers_file}" 2>/dev/null || true)
+    if [ -n "$v" ] && [ "$v" != "null" ]; then
+      echo "$v"
+      return 0
+    fi
+  fi
+
+  echo "4000"
 }
 
 escape_sed_repl() {
@@ -167,7 +208,8 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
     ERA_STYLE=$(jq -r .era_style "${JOB_FILE}")
     PERSON_FULL_NAME=$(echo "$CANDIDATE_JSON" | jq -r .full_name)
     PERSON_AGE=$(echo "$CANDIDATE_JSON" | jq -r .estimated_age_during_time_window)
-    STILL_LOOK_PROFILE=$(echo "$VISUAL_JSON" | jq -c .still_photography)
+    # Keep the template slot compact; injecting the full JSON blob can exceed provider prompt limits.
+    STILL_LOOK_PROFILE="Camera format: ${CAMERA_FORMAT_LOCK}; Lens: ${LENS_FEEL_LOCK}; Exposure/flash: ${FLASH_STYLE_LOCK}; Film response: ${FILM_LOOK_LOCK}; Artifacts: ${ARTIFACTS_LIST_LOCK}"
 
     # OpenAI Images often rejects prompts that try to depict real people by name.
     # Default behavior: redact names in the image prompt, but keep the real name in preproduction.json for labeling.
@@ -236,45 +278,102 @@ for i in $(seq 0 $((N_SUBJECTS - 1))); do
     else
       echo "Generating image ${i} for ${PERSON_FULL_NAME} (prompt subject redacted)..."
     fi
-    
-    # This command calls the OpenAI Images API to generate a still image for a subject.
-    IMAGE_MODEL="$(jq -r '.provider.image_gen' "$JOB_FILE" | cut -d'/' -f2)"
-    IMG_PROMPT_CONTENT="$(cat "$IMG_PROMPT_FILE")"
-    IMG_PAYLOAD=$(jq -n \
-      --arg model "$IMAGE_MODEL" \
-      --arg prompt "$IMG_PROMPT_CONTENT" \
-      '{model:$model, prompt:$prompt, n:1, size:"1024x1024"}')
-
-    IMG_RESPONSE=$(curl -sS https://api.openai.com/v1/images/generations \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENAI_API_KEY" \
-      -d "$IMG_PAYLOAD" \
-    )
-
-    IMG_RAW_RESPONSE_FILE="${OUT_DIR}/logs/image_${i}_openai_response.json"
-    echo "$IMG_RESPONSE" > "$IMG_RAW_RESPONSE_FILE"
 
     IMG_PATH="${OUT_DIR}/images/subject_${i}.png"
-    IMG_URL=$(echo "$IMG_RESPONSE" | jq -r '.data[0].url // empty')
-    IMG_B64=$(echo "$IMG_RESPONSE" | jq -r '.data[0].b64_json // empty')
+    IMAGE_PROVIDER_HINT=$(jq -r '.provider.image_gen // empty' "$JOB_FILE" 2>/dev/null || true)
+    if [ -z "${IMAGE_PROVIDER_HINT}" ] || [ "${IMAGE_PROVIDER_HINT}" = "null" ]; then
+      echo "Error: provider.image_gen is required (example: openai/dall-e-3)." >&2
+      exit 1
+    fi
 
-    if [ -n "$IMG_B64" ]; then
-        echo "$IMG_B64" | base64 -d > "$IMG_PATH"
-        echo "Image ${i} saved to ${IMG_PATH} (b64)"
-    elif [ -n "$IMG_URL" ]; then
-        curl -sS -L "$IMG_URL" -o "$IMG_PATH"
-        echo "Image ${i} saved to ${IMG_PATH} (url)"
-    else
-      echo "Warning: OpenAI Images API returned no image data for subject ${i}. Falling back to a local mock image." >&2
-      echo "Response saved to: ${IMG_RAW_RESPONSE_FILE}" >&2
-      echo "Error details (if present):" >&2
-      echo "$IMG_RESPONSE" | jq -r '.error.message // .error // "(no error field)"' >&2 || true
+    # Fail fast by default: do NOT continue to video stage if image generation fails.
+    STRICT_IMAGE_GEN="${STRICT_IMAGE_GEN:-true}"
 
+    IMG_URL=""
+    IMG_B64=""
+
+    if [ "${IMAGE_PROVIDER_HINT}" = "local-mock" ]; then
       ffmpeg -y -f lavfi -i color=c=0x323232:s=1024x1024 \
         -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='Subject ${i}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2" \
         -frames:v 1 "${IMG_PATH}" -loglevel error
-      IMG_URL=""
       echo "Mock image ${i} saved to ${IMG_PATH}"
+    elif [[ "${IMAGE_PROVIDER_HINT}" == openai/* ]]; then
+      # This command calls the OpenAI Images API to generate a still image for a subject.
+      IMAGE_MODEL="${IMAGE_PROVIDER_HINT#openai/}"
+      if [ -z "${IMAGE_MODEL}" ]; then
+        echo "Error: provider.image_gen must be of the form openai/<model> (example: openai/dall-e-3). Got: ${IMAGE_PROVIDER_HINT}" >&2
+        exit 1
+      fi
+
+      IMG_PROMPT_CONTENT="$(cat "$IMG_PROMPT_FILE")"
+
+      # Provider limit enforcement (OpenAI Images: 4000 chars). This avoids paid API calls that will be rejected.
+      MAX_PROMPT_CHARS=$(get_image_max_prompt_chars)
+      PROMPT_LEN=$(printf '%s' "$IMG_PROMPT_CONTENT" | wc -c | tr -d ' ')
+      if [ "$PROMPT_LEN" -gt "$MAX_PROMPT_CHARS" ]; then
+        TOO_LONG_ACTION="${IMAGE_PROMPT_TOO_LONG_ACTION:-truncate}"
+        echo "Warning: Image prompt for subject ${i} is ${PROMPT_LEN} chars; max is ${MAX_PROMPT_CHARS}. Action=${TOO_LONG_ACTION}." >&2
+
+        if [ "$TOO_LONG_ACTION" = "fail" ]; then
+          echo "Error: Refusing to call OpenAI Images API with an overlong prompt. Full prompt: ${IMG_PROMPT_FILE}" >&2
+          exit 1
+        fi
+
+        # Deterministic truncation (bytes). Also save the truncated prompt for audit/debugging.
+        IMG_PROMPT_TRUNC_FILE="${OUT_DIR}/prompts/image_${i}_truncated.txt"
+        IMG_PROMPT_CONTENT=$(printf '%s' "$IMG_PROMPT_CONTENT" | head -c "$MAX_PROMPT_CHARS")
+        printf '%s' "$IMG_PROMPT_CONTENT" > "$IMG_PROMPT_TRUNC_FILE"
+        echo "Wrote truncated prompt: ${IMG_PROMPT_TRUNC_FILE}" >&2
+      fi
+
+      IMG_PAYLOAD=$(jq -n \
+        --arg model "$IMAGE_MODEL" \
+        --arg prompt "$IMG_PROMPT_CONTENT" \
+        '{model:$model, prompt:$prompt, n:1, size:"1024x1024"}')
+
+      IMG_RESPONSE=$(curl -sS https://api.openai.com/v1/images/generations \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $OPENAI_API_KEY" \
+        -d "$IMG_PAYLOAD")
+
+      IMG_RAW_RESPONSE_FILE="${OUT_DIR}/logs/image_${i}_openai_response.json"
+      echo "$IMG_RESPONSE" > "$IMG_RAW_RESPONSE_FILE"
+
+      OPENAI_IMG_ERR=$(echo "$IMG_RESPONSE" | jq -r '.error.message // empty' 2>/dev/null || true)
+      if [ -n "${OPENAI_IMG_ERR}" ]; then
+        echo "Error: OpenAI Images API failed for subject ${i}: ${OPENAI_IMG_ERR}" >&2
+        echo "Response saved to: ${IMG_RAW_RESPONSE_FILE}" >&2
+        exit 1
+      fi
+
+      IMG_URL=$(echo "$IMG_RESPONSE" | jq -r '.data[0].url // empty')
+      IMG_B64=$(echo "$IMG_RESPONSE" | jq -r '.data[0].b64_json // empty')
+
+      if [ -n "$IMG_B64" ]; then
+          echo "$IMG_B64" | base64 -d > "$IMG_PATH"
+          echo "Image ${i} saved to ${IMG_PATH} (b64)"
+      elif [ -n "$IMG_URL" ]; then
+          curl -fsSL "$IMG_URL" -o "$IMG_PATH"
+          echo "Image ${i} saved to ${IMG_PATH} (url)"
+      else
+        echo "Error: OpenAI Images API returned no image data for subject ${i}." >&2
+        echo "Response saved to: ${IMG_RAW_RESPONSE_FILE}" >&2
+        echo "$IMG_RESPONSE" | jq -r '.error.message // .error // "(no error field)"' >&2 || true
+        if [ "${STRICT_IMAGE_GEN}" = "true" ]; then
+          exit 1
+        fi
+      fi
+    else
+      echo "Error: Unsupported provider.image_gen: ${IMAGE_PROVIDER_HINT}" >&2
+      echo "Use openai/<model> (e.g. openai/dall-e-3) or local-mock." >&2
+      exit 1
+    fi
+
+    if ! is_png_file "${IMG_PATH}"; then
+      echo "Error: Generated image is not a valid PNG: ${IMG_PATH}" >&2
+      if [ "${STRICT_IMAGE_GEN}" = "true" ]; then
+        exit 1
+      fi
     fi
     
     # Get a public URL for the video step.

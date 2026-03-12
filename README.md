@@ -81,6 +81,12 @@ Provider hints (used as model IDs):
 
 Note: `run.sh` currently derives the OpenAI model name by taking the part after `/`.
 
+Image prompt limits:
+
+- OpenAI Images enforces a maximum prompt length (currently 4000 characters). `run.sh` checks this deterministically before calling the API.
+- Configure via `providers.json` (`image.max_prompt_chars`) or override with `IMAGE_MAX_PROMPT_CHARS`.
+- If a prompt is too long, the default behavior is to truncate (`IMAGE_PROMPT_TOO_LONG_ACTION=truncate`). To hard-fail instead, set `IMAGE_PROMPT_TOO_LONG_ACTION=fail`.
+
 Safety flags (default to `false` if omitted):
 
 - `allow_living_people`
