@@ -7,7 +7,8 @@
   "image": {
     "name": "openai",
     "endpoint": "https://api.openai.com/v1/images/generations",
-    "api_key_env": "OPENAI_API_KEY"
+    "api_key_env": "OPENAI_API_KEY",
+    "max_prompt_chars": 4000
   },
   "video": {
     "name": "mock",

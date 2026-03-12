@@ -1,0 +1,16 @@
+{
+  "location": "Boston, MA, USA",
+  "venue": "The Comedy Studio",
+  "date": "1996-01-15",
+  "num_subjects": 3,
+  "output_seconds": 15,
+  "era_style": "mid-90s Boston comedy club, casual and intimate, warm lighting",
+  "camera_style": "Canon EOS-1N film, vibrant colors, steady shots",
+  "provider": {
+    "llm": "openai/gpt-4-turbo",
+    "image_gen": "openai/dall-e-3",
+    "video_gen": "replicate/google/veo-3.1-fast"
+  },
+  "allow_living_people": false,
+  "allow_minors": false
+}
