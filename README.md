@@ -177,4 +177,4 @@ This repo is intentionally shell-first and easy to hack on. Good next contributi
 
 ## License
 
-No license is specified in this repository. If you plan to use or redistribute it, add a license file.
+MIT License. See LICENSE.
